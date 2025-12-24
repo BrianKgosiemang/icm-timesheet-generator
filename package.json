@@ -1,0 +1,22 @@
+{
+  "name": "icm-timesheet-generator",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "body-parser": "^2.2.0",
+    "docx": "^9.5.1",
+    "docxtemplater": "^3.65.1",
+    "express": "^5.1.0",
+    "nodemailer": "^7.0.3",
+    "pizzip": "^3.2.0",
+    "xml2js": "^0.6.2"
+  }
+}
