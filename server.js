@@ -3,15 +3,18 @@ require('dotenv').config();
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
+const multer = require("multer");
 const nodemailer = require("nodemailer");
-const bodyParser = require("body-parser");
 const XLSX = require("xlsx");
 const { format, getYear, subMonths, getDaysInMonth } = require("date-fns");
 const { PDFDocument } = require("pdf-lib");
 
 const app = express();
-app.use(bodyParser.json());
 app.use(express.static("public"));
+
+// Multer config: store uploaded file temporarily
+const upload = multer({ dest: os.tmpdir() });
 
 const TEMPLATE_PATH = path.join(__dirname, "templates", "timesheet-template.pdf");
 
@@ -38,10 +41,9 @@ function getWeekHeaders(month) {
   };
 }
 
-async function loadDataFromExcel() {
-  const filePath = path.join(__dirname, "data.xlsx");
+async function loadDataFromExcel(filePath) {
   if (!fs.existsSync(filePath)) {
-    throw new Error("data.xlsx not found in project root.");
+    throw new Error("Excel file not found at specified path.");
   }
 
   const workbook = XLSX.readFile(filePath);
@@ -51,28 +53,28 @@ async function loadDataFromExcel() {
   const rows = XLSX.utils.sheet_to_json(sheet);
 
   if (rows.length === 0) {
-    throw new Error("No data rows found in the sheet.");
+    throw new Error("No data rows found in the Excel sheet.");
   }
 
   return rows.map(row => ({
-    learnerName: (row.name || "Unknown Learner").toString().trim(),
-    idNumber: (row.idNumber || "").toString().trim(),
-    contact: (row.contact || "").toString().trim(),
-    email: (row.email || "").toString().trim(),
-    employer: (row.employer || "").toString().trim(),
-    physicalAddress: (row.physicalAddress || "").toString().trim(),
-    suburb: (row.suburb || "").toString().trim(),
-    cityTown: (row.cityTown || "").toString().trim(),
-    postalCode: (row.postalCode || "").toString().trim(),
-    localMunicipality: (row.localMunicipality || "").toString().trim(),
-    districtMunicipality: (row.districtMunicipality || "").toString().trim(),
-    metropolitanMunicipality: (row.metropolitanMunicipality || "").toString().trim(),
-    province: (row.province || "").toString().trim(),
-    supervisorName: (row.supervisorName || "").toString().trim(),
-    supervisorContact: (row.supervisorContact || "").toString().trim(),
-    supervisorEmail: (row.supervisorEmail || "").toString().trim(),
+    learnerName: (row.name || row["Learner Name"] || "Unknown Learner").toString().trim(),
+    idNumber: (row.idNumber || row["ID Number"] || "").toString().trim(),
+    contact: (row.contact || row["Contact"] || "").toString().trim(),
+    email: (row.email || row["Email"] || "").toString().trim(),
+    employer: (row.employer || row["Employer"] || "").toString().trim(),
+    physicalAddress: (row.physicalAddress || row["Physical Address"] || "").toString().trim(),
+    suburb: (row.suburb || row["Suburb"] || "").toString().trim(),
+    cityTown: (row.cityTown || row["City/Town"] || "").toString().trim(),
+    postalCode: (row.postalCode || row["Postal Code"] || "").toString().trim(),
+    localMunicipality: (row.localMunicipality || row["Local Municipality"] || "").toString().trim(),
+    districtMunicipality: (row.districtMunicipality || row["District Municipality"] || "").toString().trim(),
+    metropolitanMunicipality: (row.metropolitanMunicipality || row["Metropolitan Municipality"] || "").toString().trim(),
+    province: (row.province || row["Province"] || "").toString().trim(),
+    supervisorName: (row.supervisorName || row["Supervisor Name"] || "").toString().trim(),
+    supervisorContact: (row.supervisorContact || row["Supervisor Contact"] || "").toString().trim(),
+    supervisorEmail: (row.supervisorEmail || row["Supervisor Email"] || "").toString().trim(),
     activitiesCount: (row.activitiesCount || "").toString().trim(),
-    tvetCollege: (row.tvetCollege || "").toString().trim(),
+    tvetCollege: (row.tvetCollege || row["TVET College"] || "").toString().trim(),
     month: (row.month || getCurrentMonthUpper()).toString().toUpperCase().trim(),
   }));
 }
@@ -86,13 +88,14 @@ async function generatePdf(data, outputPath) {
     try {
       if (value) {
         form.getTextField(fieldName).setText(value.toString());
-        console.log(`Filled field: ${fieldName} with ${value}`);
+        console.log(`Filled field: ${fieldName} with "${value}"`);
       }
     } catch (e) {
-      console.log(`Field not found or error filling: ${fieldName}`);
+      console.log(`Field not found: ${fieldName}`);
     }
   };
 
+  // Fill all fields
   safeSet("learnerName", data.learnerName);
   safeSet("idNumber", data.idNumber);
   safeSet("contact", data.contact);
@@ -113,6 +116,7 @@ async function generatePdf(data, outputPath) {
   safeSet("tvetCollege", data.tvetCollege);
   safeSet("month", data.month);
 
+  // Week headers
   const weeks = getWeekHeaders(data.month);
   safeSet("week1", weeks.week1);
   safeSet("week2", weeks.week2);
@@ -136,25 +140,45 @@ async function sendEmail(recipientEmail, attachmentPath, month) {
   });
 
   await transporter.sendMail({
-    from: process.env.EMAIL_FROM || `"Timesheet Bot" <${process.env.EMAIL_USER}>`,
+    from: process.env.EMAIL_FROM || `"ICM ShiftTrack" <${process.env.EMAIL_USER}>`,
     to: recipientEmail,
-    subject: `Your ${month} Fillable Timesheet`,
-    text: `Hello,\n\nPlease find your pre-filled ${month} timesheet attached. You can fill in the remaining fields digitally.\n\nThank you!`,
-    html: `<p>Hello,</p><p>Please find your pre-filled <strong>${month}</strong> timesheet attached.</p><p>You can fill in the remaining fields digitally in any PDF reader.</p><p>Thank you!</p>`,
+    subject: `Your ${month} Timesheet - ICM WIL`,
+    text: `Hello,\n\nPlease find your pre-filled ${month} timesheet attached.\nFill in your hours and signatures digitally, then submit.\n\nThank you!\nICM Team`,
+    html: `<p>Hello,</p>
+           <p>Please find your pre-filled <strong>${month}</strong> timesheet attached.</p>
+           <p>You can fill in hours and signatures digitally in any PDF reader.</p>
+           <p>Thank you!<br><strong>ICM Team</strong></p>`,
     attachments: [{ filename: path.basename(attachmentPath), path: attachmentPath }]
   });
 
   console.log(`Email sent to: ${recipientEmail}`);
 }
 
-app.post("/generate", async (req, res) => {
+// Main route: supports both uploaded file and default data.xlsx
+app.post("/generate", upload.single("dataFile"), async (req, res) => {
+  let excelFilePath = null;
+  let tempFileToDelete = null;
+
   try {
-    const learners = await loadDataFromExcel();
+    if (req.file) {
+      // User uploaded a file
+      excelFilePath = req.file.path;
+      tempFileToDelete = req.file.path;
+      console.log(`Using uploaded file: ${req.file.originalname}`);
+    } else if (fs.existsSync(path.join(__dirname, "data.xlsx"))) {
+      // Fallback to default file
+      excelFilePath = path.join(__dirname, "data.xlsx");
+      console.log("Using default data.xlsx");
+    } else {
+      return res.status(400).send("❌ No file uploaded and no default 'data.xlsx' found in project root.");
+    }
+
+    const learners = await loadDataFromExcel(excelFilePath);
     const results = [];
 
     for (const learner of learners) {
       if (!learner.email) {
-        results.push(`⚠️ ${learner.learnerName} skipped — no email`);
+        results.push(`⚠️ ${learner.learnerName} skipped — no email provided`);
         continue;
       }
 
@@ -165,14 +189,21 @@ app.post("/generate", async (req, res) => {
       await generatePdf(learner, outputPath);
       await sendEmail(learner.email, outputPath, learner.month);
 
-      results.push(`${learner.learnerName} (${learner.month}) → generated & emailed to ${learner.email}`);
+      results.push(`${learner.learnerName} (${learner.month}) → emailed to ${learner.email}`);
     }
 
-    res.send(`✅ All done!<br><br>${results.join("<br>")}`);
+    res.send(`✅ All timesheets generated and sent!<br><br>${results.join("<br>")}`);
+
   } catch (err) {
-    console.error(err);
+    console.error("Error:", err);
     res.status(500).send(`❌ Error: ${err.message}`);
+  } finally {
+    // Clean up temporary uploaded file
+    if (tempFileToDelete && fs.existsSync(tempFileToDelete)) {
+      fs.unlinkSync(tempFileToDelete);
+      console.log("Cleaned up temporary uploaded file");
+    }
   }
 });
 
-app.listen(5000, () => console.log("Server running at http://localhost:5000"));
+app.listen(5000, () => console.log("ICM ShiftTrack server running at http://localhost:5000"));
