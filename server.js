@@ -95,7 +95,6 @@ async function generatePdf(data, outputPath) {
     }
   };
 
-  // Fill all fields
   safeSet("learnerName", data.learnerName);
   safeSet("idNumber", data.idNumber);
   safeSet("contact", data.contact);
@@ -116,7 +115,6 @@ async function generatePdf(data, outputPath) {
   safeSet("tvetCollege", data.tvetCollege);
   safeSet("month", data.month);
 
-  // Week headers
   const weeks = getWeekHeaders(data.month);
   safeSet("week1", weeks.week1);
   safeSet("week2", weeks.week2);
@@ -139,34 +137,115 @@ async function sendEmail(recipientEmail, attachmentPath, month) {
     },
   });
 
+  // Use deployed URL for logo in email (update after Render deployment)
+  const logoUrl = process.env.APP_URL 
+    ? `${process.env.APP_URL.trim().replace(/\/$/, "")}/icm-logo.png`
+    : "https://your-app.onrender.com/icm-logo.png"; // Replace with your actual Render URL after deploy
+
+  const htmlEmail = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your ${month} Timesheet</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; background:#f4f7fc; margin:0; padding:0; color:#333; }
+    .container { max-width:600px; margin:20px auto; background:white; border-radius:12px; overflow:hidden; box-shadow:0 10px 30px rgba(0,51,102,0.1); border:1px solid #e0e7ff; }
+    .header { background:linear-gradient(135deg,#003366 0%,#004488 100%); padding:30px; text-align:center; color:white; }
+    .header img { height:80px; margin-bottom:15px; }
+    .header h1 { margin:0; font-size:28px; font-weight:600; }
+    .header p { margin:8px 0 0; font-size:16px; opacity:0.95; }
+    .content { padding:35px; line-height:1.6; }
+    .highlight { background:#e6f0ff; padding:20px; border-radius:10px; border-left:5px solid #0066cc; margin:20px 0; }
+    .highlight strong { color:#003366; }
+    .btn { display:inline-block; background:linear-gradient(135deg,#003366 0%,#0066cc 100%); color:white; padding:14px 32px; text-decoration:none; border-radius:50px; font-weight:600; margin:15px 0; box-shadow:0 6px 15px rgba(0,102,204,0.2); }
+    .footer { background:#f8fbff; padding:25px; text-align:center; color:#666; font-size:14px; border-top:1px solid #e0e7ff; }
+    .footer a { color:#0066cc; text-decoration:none; }
+    @media (max-width:600px) { .container{margin:10px;} .content{padding:25px;} .header{padding:25px;} }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <img src="${logoUrl}" alt="ICM Logo">
+      <h1>Your ${month} Timesheet</h1>
+      <p>Institute of Certified Managers – Work Integrated Learning</p>
+    </div>
+
+    <div class="content">
+      <p>Dear Learner,</p>
+
+      <p>We hope you're having a productive and rewarding experience during your Work Integrated Learning placement.</p>
+
+      <div class="highlight">
+        <p><strong>Your pre-filled timesheet for <u>${month}</u> is attached.</strong></p>
+        <p>Please complete the following:</p>
+        <ul>
+          <li>Daily <strong>Time In / Time Out</strong></li>
+          <li>Your <strong>intern signature</strong> each day</li>
+          <li>Supervisor sign-off weekly</li>
+          <li>Submit by the deadline</li>
+        </ul>
+      </div>
+
+      <p>You can edit this PDF digitally using any PDF reader (Adobe Acrobat Reader, browser, phone app, etc.).</p>
+
+      <p style="text-align:center;">
+        <a href="#" class="btn">Open Attached Timesheet</a>
+      </p>
+
+      <p>Thank you for your dedication and hard work!</p>
+
+      <p>Best regards,<br>
+      <strong>The ICM WIL Team</strong><br>
+      Institute of Certified Managers</p>
+    </div>
+
+    <div class="footer">
+      <p>This is an automated message from <strong>ICM ShiftTrack</strong>.</p>
+      <p>Need help? Contact your WIL coordinator.</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+
   await transporter.sendMail({
     from: process.env.EMAIL_FROM || `"ICM ShiftTrack" <${process.env.EMAIL_USER}>`,
     to: recipientEmail,
     subject: `Your ${month} Timesheet - ICM WIL`,
-    text: `Hello,\n\nPlease find your pre-filled ${month} timesheet attached.\nFill in your hours and signatures digitally, then submit.\n\nThank you!\nICM Team`,
-    html: `<p>Hello,</p>
-           <p>Please find your pre-filled <strong>${month}</strong> timesheet attached.</p>
-           <p>You can fill in hours and signatures digitally in any PDF reader.</p>
-           <p>Thank you!<br><strong>ICM Team</strong></p>`,
-    attachments: [{ filename: path.basename(attachmentPath), path: attachmentPath }]
+    text: `Hello,
+
+Your pre-filled ${month} timesheet is attached.
+
+Please fill in your daily hours and signatures digitally, then submit.
+
+Thank you!
+ICM Team`,
+    html: htmlEmail,
+    attachments: [
+      {
+        filename: path.basename(attachmentPath),
+        path: attachmentPath
+      }
+    ]
   });
 
-  console.log(`Email sent to: ${recipientEmail}`);
+  console.log(`Styled email sent to: ${recipientEmail}`);
 }
 
-// Main route: supports both uploaded file and default data.xlsx
+// Main route
 app.post("/generate", upload.single("dataFile"), async (req, res) => {
   let excelFilePath = null;
   let tempFileToDelete = null;
 
   try {
     if (req.file) {
-      // User uploaded a file
       excelFilePath = req.file.path;
       tempFileToDelete = req.file.path;
       console.log(`Using uploaded file: ${req.file.originalname}`);
     } else if (fs.existsSync(path.join(__dirname, "data.xlsx"))) {
-      // Fallback to default file
       excelFilePath = path.join(__dirname, "data.xlsx");
       console.log("Using default data.xlsx");
     } else {
@@ -198,7 +277,6 @@ app.post("/generate", upload.single("dataFile"), async (req, res) => {
     console.error("Error:", err);
     res.status(500).send(`❌ Error: ${err.message}`);
   } finally {
-    // Clean up temporary uploaded file
     if (tempFileToDelete && fs.existsSync(tempFileToDelete)) {
       fs.unlinkSync(tempFileToDelete);
       console.log("Cleaned up temporary uploaded file");
