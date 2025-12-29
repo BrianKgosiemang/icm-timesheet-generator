@@ -24,10 +24,9 @@
       align-items: center;
       justify-content: center;
       position: relative;
-      background-color: #f0f7ff; /* Very light blue fallback */
+      background-color: #f0f7ff;
     }
 
-    /* ICM Logo Watermark */
     body::before {
       content: '';
       position: absolute;
@@ -50,15 +49,13 @@
       border-radius: 20px;
       box-shadow: 0 15px 40px rgba(0, 51, 102, 0.18);
       overflow: hidden;
-      max-width: 680px;
+      max-width: 720px;
       width: 100%;
       transition: transform 0.3s ease;
       border: 1px solid rgba(0, 102, 204, 0.1);
     }
 
-    .card:hover {
-      transform: translateY(-10px);
-    }
+    .card:hover { transform: translateY(-10px); }
 
     .card-header {
       background: linear-gradient(135deg, #003366 0%, #004488 100%);
@@ -121,15 +118,54 @@
       transform: scale(1.03);
     }
 
-    #fileInput {
-      display: none;
-    }
+    #fileInput { display: none; }
 
     .file-name {
       margin: 1.2rem 0 1.8rem;
       font-weight: 600;
       color: #003366;
       font-size: 1.1rem;
+    }
+
+    .selector-group {
+      display: flex;
+      justify-content: center;
+      gap: 15px;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .month-selector, .year-selector {
+      flex: 1;
+      min-width: 220px;
+      max-width: 300px;
+    }
+
+    #selectedMonth, #selectedYear {
+      border-radius: 50px;
+      padding: 14px 20px;
+      font-size: 1.1rem;
+      text-align: center;
+      height: 56px;
+    }
+
+    .email-input-group {
+      max-width: 480px;
+      margin: 0 auto 2rem;
+    }
+
+    #testEmail {
+      border-radius: 50px 0 0 50px;
+      border-right: none;
+      padding: 14px 20px;
+      font-size: 1.1rem;
+    }
+
+    .input-group-text {
+      background: #003366;
+      color: white;
+      border-radius: 0 50px 50px 0;
+      padding: 0 20px;
     }
 
     #generateBtn {
@@ -148,14 +184,6 @@
     #generateBtn:hover {
       transform: translateY(-5px);
       box-shadow: 0 20px 40px rgba(0, 102, 204, 0.35);
-    }
-
-    #generateBtn:active {
-      transform: translateY(1px);
-    }
-
-    #generateBtn i {
-      margin-right: 14px;
     }
 
     #status {
@@ -194,6 +222,36 @@
       <p>Generate professional, pre-filled timesheets instantly</p>
     </div>
     <div class="card-body">
+      <!-- Month & Year Selector -->
+      <div class="selector-group">
+        <div class="month-selector">
+          <select id="selectedMonth" class="form-select form-select-lg">
+            <option value="JANUARY">January</option>
+            <option value="FEBRUARY">February</option>
+            <option value="MARCH">March</option>
+            <option value="APRIL">April</option>
+            <option value="MAY">May</option>
+            <option value="JUNE">June</option>
+            <option value="JULY">July</option>
+            <option value="AUGUST">August</option>
+            <option value="SEPTEMBER">September</option>
+            <option value="OCTOBER">October</option>
+            <option value="NOVEMBER">November</option>
+            <option value="DECEMBER">December</option>
+          </select>
+        </div>
+        <div class="year-selector">
+          <select id="selectedYear" class="form-select form-select-lg">
+            <option value="2025">2025</option>
+            <option value="2026" selected>2026</option>
+            <option value="2027">2027</option>
+            <option value="2028">2028</option>
+            <option value="2029">2029</option>
+            <option value="2030">2030</option>
+          </select>
+        </div>
+      </div>
+
       <!-- Optional Upload -->
       <div class="upload-area" id="uploadArea">
         <i class="fas fa-cloud-upload-alt fa-3x" style="color: #003366; margin-bottom: 1rem;"></i>
@@ -203,14 +261,20 @@
       </div>
       <div class="file-name" id="fileName">Using default data.xlsx (upload to override)</div>
 
-      <!-- Always Active Button -->
+      <!-- Optional Test Email -->
+      <div class="email-input-group input-group">
+        <input type="email" id="testEmail" class="form-control" placeholder="Send test to specific email (optional)">
+        <span class="input-group-text"><i class="fas fa-envelope"></i></span>
+      </div>
+
+      <!-- Generate Button -->
       <button id="generateBtn" class="btn btn-lg shadow-lg">
-        <i class="fas fa-magic"></i> Generate Timesheets Now
+        <i class="fas fa-magic"></i> Generate Timesheets
       </button>
 
       <p id="status" class="info">
-        Ready! Click Generate to use default data.<br>
-        Or upload a file above for custom data.
+        Select month and year → click Generate to send timesheets to all learners.<br>
+        Upload file or enter test email for custom behavior.
       </p>
     </div>
   </div>
@@ -219,10 +283,20 @@
     const fileInput = document.getElementById('fileInput');
     const uploadArea = document.getElementById('uploadArea');
     const fileName = document.getElementById('fileName');
+    const selectedMonth = document.getElementById('selectedMonth');
+    const selectedYear = document.getElementById('selectedYear');
+    const testEmail = document.getElementById('testEmail');
     const generateBtn = document.getElementById('generateBtn');
     const status = document.getElementById('status');
 
     let selectedFile = null;
+
+    // Set current month and year as default
+    const today = new Date();
+    const currentMonthName = today.toLocaleString('default', { month: 'long' }).toUpperCase();
+    const currentYear = today.getFullYear();
+    selectedMonth.value = currentMonthName;
+    selectedYear.value = currentYear;
 
     uploadArea.addEventListener('click', () => fileInput.click());
 
@@ -266,12 +340,21 @@
 
     generateBtn.addEventListener('click', async () => {
       generateBtn.disabled = true;
-      status.innerHTML = '<span class="spinner"></span> Generating timesheets...';
+      const monthText = selectedMonth.options[selectedMonth.selectedIndex].text;
+      const yearText = selectedYear.value;
+      status.innerHTML = `<span class="spinner"></span> Generating timesheets for ${monthText} ${yearText}...`;
       status.className = '';
 
       const formData = new FormData();
       if (selectedFile) {
         formData.append('dataFile', selectedFile);
+      }
+      formData.append('month', selectedMonth.value);
+      formData.append('year', selectedYear.value);
+
+      const email = testEmail.value.trim();
+      if (email) {
+        formData.append('testEmail', email);
       }
 
       try {
@@ -286,7 +369,7 @@
         const cleanMsg = tempDiv.textContent || tempDiv.innerText || msg;
 
         if (res.ok) {
-          status.textContent = cleanMsg || 'Timesheets generated and emailed!';
+          status.textContent = cleanMsg || 'Timesheets generated and sent!';
           status.className = 'success';
         } else {
           status.textContent = 'Error: ' + cleanMsg;

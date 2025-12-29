@@ -7,13 +7,12 @@ const os = require("os");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
 const XLSX = require("xlsx");
-const { format, getYear, subMonths, getDaysInMonth } = require("date-fns");
+const { format, getYear, subMonths, getDaysInMonth, addDays } = require("date-fns");
 const { PDFDocument } = require("pdf-lib");
 
 const app = express();
 app.use(express.static("public"));
 
-// Multer config: store uploaded file temporarily
 const upload = multer({ dest: os.tmpdir() });
 
 const TEMPLATE_PATH = path.join(__dirname, "templates", "timesheet-template.pdf");
@@ -75,7 +74,8 @@ async function loadDataFromExcel(filePath) {
     supervisorEmail: (row.supervisorEmail || row["Supervisor Email"] || "").toString().trim(),
     activitiesCount: (row.activitiesCount || "").toString().trim(),
     tvetCollege: (row.tvetCollege || row["TVET College"] || "").toString().trim(),
-    month: (row.month || getCurrentMonthUpper()).toString().toUpperCase().trim(),
+    month: "", // Will be overridden by frontend
+    year: 0,   // Will be overridden by frontend
   }));
 }
 
@@ -86,15 +86,16 @@ async function generatePdf(data, outputPath) {
 
   const safeSet = (fieldName, value) => {
     try {
-      if (value) {
+      if (value !== undefined && value !== "") {
         form.getTextField(fieldName).setText(value.toString());
-        console.log(`Filled field: ${fieldName} with "${value}"`);
+        console.log(`Filled: ${fieldName} = ${value}`);
       }
     } catch (e) {
-      console.log(`Field not found: ${fieldName}`);
+      // Silent if field missing
     }
   };
 
+  // Personal info
   safeSet("learnerName", data.learnerName);
   safeSet("idNumber", data.idNumber);
   safeSet("contact", data.contact);
@@ -115,12 +116,63 @@ async function generatePdf(data, outputPath) {
   safeSet("tvetCollege", data.tvetCollege);
   safeSet("month", data.month);
 
+  // Week headers
   const weeks = getWeekHeaders(data.month);
   safeSet("week1", weeks.week1);
   safeSet("week2", weeks.week2);
   safeSet("week3", weeks.week3);
   safeSet("week4", weeks.week4);
   safeSet("week5", weeks.week5);
+
+  // === ICM LAYOUT: DATES & DAYS ===
+  const monthNames = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"];
+  const monthIndex = monthNames.indexOf(data.month);
+  if (monthIndex === -1) return;
+
+  const year = data.year;
+
+  const formatDate = (date) => format(date, "dd-MM-yy");
+  const formatDay = (date) => format(date, "EEE");
+
+  // 1. Week 1: 26th prev month → Sunday
+  const prevMonthIndex = monthIndex === 0 ? 11 : monthIndex - 1;
+  const prevYear = monthIndex === 0 ? year - 1 : year;
+  let currentDate = new Date(prevYear, prevMonthIndex, 26);
+
+  let dayIndex = 1;
+  while (currentDate.getDay() !== 0 && dayIndex <= 7) { // Fill until Sunday (0 = Sunday)
+    safeSet(`day_w1_d${dayIndex}`, formatDay(currentDate));
+    safeSet(`date_w1_d${dayIndex}`, formatDate(currentDate));
+    currentDate = addDays(currentDate, 1);
+    dayIndex++;
+  }
+  // Fill the Sunday
+  if (dayIndex <= 7) {
+    safeSet(`day_w1_d${dayIndex}`, formatDay(currentDate));
+    safeSet(`date_w1_d${dayIndex}`, formatDate(currentDate));
+    currentDate = addDays(currentDate, 1); // Move to Monday for Week 2
+  }
+
+  // 2. Weeks 2–4: Full Monday–Sunday
+  const fullWeeks = [2, 3, 4];
+  fullWeeks.forEach(weekNum => {
+    for (let d = 1; d <= 7; d++) {
+      if (currentDate.getMonth() === monthIndex) {
+        safeSet(`day_w${weekNum}_d${d}`, formatDay(currentDate));
+        safeSet(`date_w${weekNum}_d${d}`, formatDate(currentDate));
+      }
+      currentDate = addDays(currentDate, 1);
+    }
+  });
+
+  // 3. Week 5: Monday after Week 4 → 25th of current month
+  dayIndex = 1;
+  while (currentDate.getDate() <= 25 && dayIndex <= 7) {
+    safeSet(`day_w5_d${dayIndex}`, formatDay(currentDate));
+    safeSet(`date_w5_d${dayIndex}`, formatDate(currentDate));
+    currentDate = addDays(currentDate, 1);
+    dayIndex++;
+  }
 
   const pdfBytes = await pdfDoc.save();
   fs.writeFileSync(outputPath, pdfBytes);
@@ -137,10 +189,9 @@ async function sendEmail(recipientEmail, attachmentPath, month) {
     },
   });
 
-  // Use deployed URL for logo in email (update after Render deployment)
   const logoUrl = process.env.APP_URL 
     ? `${process.env.APP_URL.trim().replace(/\/$/, "")}/icm-logo.png`
-    : "https://your-app.onrender.com/icm-logo.png"; // Replace with your actual Render URL after deploy
+    : "https://your-app.onrender.com/icm-logo.png";
 
   const htmlEmail = `
 <!DOCTYPE html>
@@ -235,7 +286,6 @@ ICM Team`,
   console.log(`Styled email sent to: ${recipientEmail}`);
 }
 
-// Main route
 app.post("/generate", upload.single("dataFile"), async (req, res) => {
   let excelFilePath = null;
   let tempFileToDelete = null;
@@ -249,29 +299,63 @@ app.post("/generate", upload.single("dataFile"), async (req, res) => {
       excelFilePath = path.join(__dirname, "data.xlsx");
       console.log("Using default data.xlsx");
     } else {
-      return res.status(400).send("❌ No file uploaded and no default 'data.xlsx' found in project root.");
+      return res.status(400).send("❌ No file uploaded and no default 'data.xlsx' found.");
     }
 
-    const learners = await loadDataFromExcel(excelFilePath);
+    let learners = await loadDataFromExcel(excelFilePath);
     const results = [];
 
+    const testEmail = req.body.testEmail || req.body["testEmail"];
+    const selectedMonth = req.body.month; // From dropdown
+    const selectedYear = req.body.year ? parseInt(req.body.year) : new Date().getFullYear();
+
+    // Override month and year if selected from frontend
+    if (selectedMonth) {
+      const upperMonth = selectedMonth.toUpperCase();
+      learners = learners.map(learner => ({
+        ...learner,
+        month: upperMonth,
+        year: selectedYear,
+      }));
+    }
+
+    if (testEmail) {
+      if (learners.length === 0) {
+        return res.status(400).send("❌ No learner data available for test.");
+      }
+
+      const testLearner = { ...learners[0] };
+      testLearner.email = testEmail;
+
+      const safeName = testLearner.learnerName.replace(/[^a-zA-Z0-9]/g, "_");
+      const filename = `timesheet-test-${safeName}-${testLearner.month}-${testLearner.year}.pdf`;
+      const outputPath = path.join(__dirname, filename);
+
+      await generatePdf(testLearner, outputPath);
+      await sendEmail(testEmail, outputPath, testLearner.month);
+
+      return res.send(`✅ Test timesheet for <strong>${testLearner.month} ${testLearner.year}</strong> sent to <strong>${testEmail}</strong>`);
+    }
+
+    // Normal mode: Send to all learners
     for (const learner of learners) {
       if (!learner.email) {
-        results.push(`⚠️ ${learner.learnerName} skipped — no email provided`);
+        results.push(`⚠️ ${learner.learnerName} skipped — no email`);
         continue;
       }
 
       const safeName = learner.learnerName.replace(/[^a-zA-Z0-9]/g, "_");
-      const filename = `timesheet-${safeName}-${learner.month}.pdf`;
+      const filename = `timesheet-${safeName}-${learner.month}-${learner.year}.pdf`;
       const outputPath = path.join(__dirname, filename);
 
       await generatePdf(learner, outputPath);
       await sendEmail(learner.email, outputPath, learner.month);
 
-      results.push(`${learner.learnerName} (${learner.month}) → emailed to ${learner.email}`);
+      results.push(`${learner.learnerName} (${learner.month} ${learner.year}) → emailed`);
     }
 
-    res.send(`✅ All timesheets generated and sent!<br><br>${results.join("<br>")}`);
+    const periodText = selectedMonth ? `${selectedMonth.toUpperCase()} ${selectedYear}` : "current period";
+    res.send(`✅ Timesheets for <strong>${periodText}</strong> generated and sent!<br><br>${results.join("<br>")}`);
 
   } catch (err) {
     console.error("Error:", err);
@@ -279,7 +363,7 @@ app.post("/generate", upload.single("dataFile"), async (req, res) => {
   } finally {
     if (tempFileToDelete && fs.existsSync(tempFileToDelete)) {
       fs.unlinkSync(tempFileToDelete);
-      console.log("Cleaned up temporary uploaded file");
+      console.log("Cleaned up temporary file");
     }
   }
 });
